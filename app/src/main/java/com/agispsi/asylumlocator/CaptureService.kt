@@ -175,6 +175,10 @@ class CaptureService : Service() {
         currentCoroutineContext().ensureActive()
         check(GameAccessService.instance?.gameForeground() == true) { "Game is not foreground. Capture paused." }
         @Suppress("DEPRECATION") check(manager.defaultDisplay.rotation == initialRotation) { "Screen rotated. Exit capture, restart and recalibrate." }
+        // Let the visible overlay reach the compositor before hiding it again. Otherwise
+        // consecutive captures on a completely static game screen may produce no new frame.
+        overlay?.visibility=View.VISIBLE
+        delay(160)
         // Hiding the overlay causes a fresh composition even if the underlying map is static.
         val since=SystemClock.elapsedRealtime()
         captureRequested=true
@@ -257,7 +261,7 @@ class CaptureService : Service() {
             val region=calibration.rect("map")
             val crop=Bitmap.createBitmap(map,region.left,region.top,region.width(),region.height())
             val fingerprint=Bitmap.createScaledBitmap(crop,80,80,true)
-            if(crop !== fingerprint) crop.recycle()
+            if(crop !== fingerprint && crop !== map) crop.recycle()
             if(visited.any { Calibration.imageDistance(it,fingerprint) < 0.025 }) {
                 fingerprint.recycle(); map.recycle(); error("Repeated map view or map boundary detected. Sweep stopped; unvisited areas remain.")
             }
@@ -303,8 +307,13 @@ class CaptureService : Service() {
         shuttingDown=true; captureRequested=false; instance=null; scope.cancel()
         overlay?.let { runCatching { manager.removeView(it) } }; calibrationView?.let { runCatching { manager.removeView(it) } }
         calibrationBitmap?.recycle(); calibrationBitmap=null
-        display?.release(); reader?.setOnImageAvailableListener(null,null); reader?.close(); projection?.stop(); projection=null
-        if(::imageThread.isInitialized) { imageThread.quitSafely() }
+        display?.release()
+        val oldReader=reader; reader=null
+        oldReader?.setOnImageAvailableListener(null,null)
+        // Close the reader after any in-flight pixel copy has released its Image.
+        if(::imageThread.isInitialized) Handler(imageThread.looper).post { oldReader?.close(); imageThread.quitSafely() }
+        else oldReader?.close()
+        projection?.stop(); projection=null
         synchronized(lock) { latest?.recycle(); latest=null }
         visited.forEach { it.recycle() }
         if(::ocr.isInitialized) ocr.close()

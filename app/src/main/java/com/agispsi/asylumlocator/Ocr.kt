@@ -6,6 +6,10 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 data class OcrLine(val text: String, val box: Rect)
 class Ocr : AutoCloseable {
@@ -16,7 +20,10 @@ class Ocr : AutoCloseable {
         val scale = if (region != null && source.height < 100) 3 else 1
         val input = if (scale > 1) Bitmap.createScaledBitmap(source, source.width * scale, source.height * scale, true) else source
         try {
-            val text = recognizer.process(InputImage.fromBitmap(input, 0)).await()
+            // ML Kit Tasks do not cancel with the coroutine. Wait for the native reader
+            // before recycling its bitmap, then honor cancellation before further work.
+            val text = withContext(NonCancellable) { recognizer.process(InputImage.fromBitmap(input, 0)).await() }
+            currentCoroutineContext().ensureActive()
             return text.textBlocks.flatMap { it.lines }.mapNotNull { line ->
                 line.boundingBox?.let { b -> OcrLine(line.text, Rect(b.left / scale + (region?.left ?: 0), b.top / scale + (region?.top ?: 0), b.right / scale + (region?.left ?: 0), b.bottom / scale + (region?.top ?: 0))) }
             }

@@ -33,7 +33,7 @@ class Calibration(private val context: Context) {
             val r = rect(key)
             val crop = Bitmap.createBitmap(screenshot, r.left, r.top, r.width(), r.height())
             File(context.filesDir, "$key.png").outputStream().use { crop.compress(Bitmap.CompressFormat.PNG, 100, it) }
-            crop.recycle()
+            if(crop !== screenshot) crop.recycle()
         }
         prefs.edit().putString("profile", data.toString()).apply()
         verifiedThisSession = false
@@ -44,7 +44,7 @@ class Calibration(private val context: Context) {
         val r = rect(key)
         val crop = Bitmap.createBitmap(frame, r.left, r.top, r.width(), r.height())
         val distance = imageDistance(reference, crop)
-        reference.recycle(); crop.recycle()
+        reference.recycle(); if(crop !== frame) crop.recycle()
         return distance < 0.085
     }
     companion object {
