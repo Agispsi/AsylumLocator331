@@ -39,7 +39,11 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
           script: |
             gradle --no-daemon connectedDebugAndroidTest
-            adb pull /sdcard/Android/data/com.agispsi.asylumlocator/files/main-screen.png app/build/reports/main-screen.png
+            adb install -r app/build/outputs/apk/debug/app-debug.apk
+            adb shell am start -W -n com.agispsi.asylumlocator/.MainActivity
+            sleep 1
+            adb shell screencap -p /data/local/tmp/main-screen.png
+            adb pull /data/local/tmp/main-screen.png app/build/reports/main-screen.png
       - name: Package APK and validation reports
         if: always()
         uses: actions/upload-artifact@v4
