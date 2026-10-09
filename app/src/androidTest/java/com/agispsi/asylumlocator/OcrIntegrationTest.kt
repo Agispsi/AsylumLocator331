@@ -11,6 +11,18 @@ import org.junit.runner.RunWith
 // Rendered fixtures test real bundled ML Kit on Android. They are NOT live-game screenshots.
 @RunWith(AndroidJUnit4::class)
 class OcrIntegrationTest {
+    @Test fun mainActivityLaunchesAndRenders() {
+        val instrumentation=InstrumentationRegistry.getInstrumentation()
+        val activity=instrumentation.startActivitySync(android.content.Intent(instrumentation.targetContext,MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        instrumentation.waitForIdleSync()
+        val screenshot=instrumentation.uiAutomation.takeScreenshot()
+        try {
+            assertNotNull(screenshot)
+            assertTrue(screenshot.width > 0 && screenshot.height > 0)
+            val folder=instrumentation.targetContext.getExternalFilesDir(null)!!
+            java.io.File(folder,"main-screen.png").outputStream().use { screenshot.compress(Bitmap.CompressFormat.PNG,100,it) }
+        } finally { screenshot?.recycle(); instrumentation.runOnMainSync { activity.finish() } }
+    }
     private fun fixture(text: String): Bitmap = Bitmap.createBitmap(1300,180,Bitmap.Config.ARGB_8888).apply {
         val canvas=Canvas(this); canvas.drawColor(Color.WHITE)
         canvas.drawText(text,30f,110f,Paint(Paint.ANTI_ALIAS_FLAG).apply { color=Color.BLACK; textSize=64f; typeface=Typeface.create("sans-serif",Typeface.NORMAL) })

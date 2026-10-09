@@ -10,6 +10,7 @@ class LocatorLogicTest {
     @Test fun allianceOnlyNeverMatches() {
         assertFalse(LocatorLogic.matches("[goneaway] SomeoneElse","goneaway"))
         assertFalse(LocatorLogic.matches("Someone[GoNeAwAy]Else","goneaway"))
+        assertFalse(LocatorLogic.matches("[goneaway[ABC]]Someone","goneaway"))
         assertFalse(LocatorLogic.matches("[GNA] GoneAway","[GNA]"))
     }
     @Test fun repeatedAndChangedTagsAreIgnored() {
@@ -29,6 +30,9 @@ class LocatorLogicTest {
         assertEquals(Coordinates(331,0,0),LocatorLogic.coordinates("#331\nX:0\nY:0"))
         assertNull(LocatorLogic.coordinates("X:123 Y:456"))
         assertNull(LocatorLogic.coordinates("#331 X:12O Y:456"))
+        assertNull(LocatorLogic.coordinates("#331 X:123 Y:45O"))
+        assertNull(LocatorLogic.coordinates("#331 X:123 Y:456.7"))
+        assertNull(LocatorLogic.coordinates("22 #331 X:123 Y:456"))
         assertNull(LocatorLogic.coordinates("#331 X:123 Y:456 #331 X:124 Y:456"))
     }
     @Test fun wrongLevelIsRejected() {

@@ -27,6 +27,8 @@ class CaptureService : Service() {
     private val lock = Any()
     private var latest: Bitmap? = null
     private var frameTime = 0L
+    @Volatile private var captureRequested = false
+    @Volatile private var shuttingDown = false
     private var overlay: LinearLayout? = null
     private var calibrationView: View? = null
     private lateinit var statusView: TextView
@@ -39,7 +41,7 @@ class CaptureService : Service() {
     private var found = 0
     private var runLog = StringBuilder()
     private var sessionId = ""
-    private var previousFingerprint: Bitmap? = null
+    private val foundKeys = mutableSetOf<String>()
     private val visited = mutableListOf<Bitmap>()
     private var initialRotation = 0
     private var calibrationBitmap: Bitmap? = null
@@ -73,8 +75,9 @@ class CaptureService : Service() {
             imageThread = HandlerThread("GameCapture").apply { start() }
             reader = ImageReader.newInstance(metrics.widthPixels,metrics.heightPixels,PixelFormat.RGBA_8888,2)
             reader!!.setOnImageAvailableListener({ source ->
-                val img = source.acquireLatestImage() ?: return@setOnImageAvailableListener
+                val img = try { source.acquireLatestImage() } catch(_: IllegalStateException) { null } ?: return@setOnImageAvailableListener
                 try {
+                    if(!captureRequested || shuttingDown) return@setOnImageAvailableListener
                     val now = SystemClock.elapsedRealtime()
                     if (now - frameTime < 120) return@setOnImageAvailableListener
                     val p = img.planes[0]
@@ -83,7 +86,10 @@ class CaptureService : Service() {
                     padded.copyPixelsFromBuffer(p.buffer)
                     val frame = Bitmap.createBitmap(padded,0,0,img.width,img.height)
                     if (frame !== padded) padded.recycle()
-                    synchronized(lock) { latest?.recycle(); latest = frame; frameTime = now }
+                    synchronized(lock) {
+                        if(shuttingDown) frame.recycle()
+                        else { latest?.recycle(); latest = frame; frameTime = now }
+                    }
                 } finally { img.close() }
             },Handler(imageThread.looper))
             display = projection!!.createVirtualDisplay("AsylumCapture",metrics.widthPixels,metrics.heightPixels,metrics.densityDpi,DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,reader!!.surface,null,null)
@@ -149,6 +155,7 @@ class CaptureService : Service() {
         if(work?.isActive == true || calibrationView != null) return
         work = scope.launch {
             try { withTimeout(4 * 60 * 60 * 1000L) { block() } }
+            catch(e: TimeoutCancellationException) { report(coverage("Stopped: screen response timed out")) }
             catch(e: CancellationException) { throw e }
             catch(e: Exception) { report(coverage("Stopped: ${e.message}")) }
             finally { overlay?.visibility=View.VISIBLE; saveLog() }
@@ -168,9 +175,10 @@ class CaptureService : Service() {
         currentCoroutineContext().ensureActive()
         check(GameAccessService.instance?.gameForeground() == true) { "Game is not foreground. Capture paused." }
         @Suppress("DEPRECATION") check(manager.defaultDisplay.rotation == initialRotation) { "Screen rotated. Exit capture, restart and recalibrate." }
-        overlay?.visibility=View.GONE
         // Hiding the overlay causes a fresh composition even if the underlying map is static.
         val since=SystemClock.elapsedRealtime()
+        captureRequested=true
+        overlay?.visibility=View.GONE
         try {
             delay(260)
             return withTimeout(4500) {
@@ -179,10 +187,10 @@ class CaptureService : Service() {
                     synchronized(lock) { if(frameTime >= since && latest != null) image=latest!!.copy(Bitmap.Config.ARGB_8888,false) }
                     if(image == null) delay(80)
                 }
-                check(GameAccessService.instance?.gameForeground() == true) { "Game lost focus during capture." }
+                if(GameAccessService.instance?.gameForeground() != true) { image!!.recycle(); error("Game lost focus during capture.") }
                 image!!
             }
-        } finally { overlay?.visibility=View.VISIBLE }
+        } finally { captureRequested=false; overlay?.visibility=View.VISIBLE }
     }
     private suspend fun guardedFrame(key: String): Bitmap {
         var frame: Bitmap? = null
@@ -228,8 +236,9 @@ class CaptureService : Service() {
             check(LocatorLogic.verifiedChain(p,p2,restoredPlayer,c,c2!!,verificationSpec)) { "Could not associate coordinates with the same Sanctuary after closing Add Tag." }
             calibration.verifiedThisSession=true
             if(spec.matches(p)) {
-                store.save(p,c,detail,tag)
-                found++
+                withContext(Dispatchers.IO) { store.save(p,c,detail,tag) }
+                foundKeys += LocatorLogic.observationKey(p,c)
+                found=foundKeys.size
                 report("Observed ${p.display}, level ${p.level}, $c. Screenshot evidence saved; review OCR in Results.")
             } else report("Verified ${p.display}, level ${p.level}, $c; does not match current search. Controls verified.")
             if(!manual) { tap(calibration.point("detailClose")); guardedFrame("mapGuard").recycle() }
@@ -240,7 +249,7 @@ class CaptureService : Service() {
         windowsInspected=0; found=0
         sessionId=System.currentTimeMillis().toString(); runLog=StringBuilder()
         visited.forEach { it.recycle() }; visited.clear()
-        previousFingerprint?.recycle(); previousFingerprint=null
+        foundKeys.clear()
         report("Starting ${spec.rows} × ${spec.columns} overlapping views from the current map position. Keep the game open and do not touch the map.")
         for(index in 0 until spec.rows*spec.columns) {
             currentCoroutineContext().ensureActive()
@@ -291,13 +300,13 @@ class CaptureService : Service() {
         if(sessionId.isNotEmpty()) runCatching { File(filesDir,"last-scan.txt").writeText("Session $sessionId; query=${spec.query}; level=${spec.level}; server=${spec.server}\n$runLog") }
     }
     override fun onDestroy() {
-        instance=null; scope.cancel()
+        shuttingDown=true; captureRequested=false; instance=null; scope.cancel()
         overlay?.let { runCatching { manager.removeView(it) } }; calibrationView?.let { runCatching { manager.removeView(it) } }
         calibrationBitmap?.recycle(); calibrationBitmap=null
         display?.release(); reader?.setOnImageAvailableListener(null,null); reader?.close(); projection?.stop(); projection=null
         if(::imageThread.isInitialized) { imageThread.quitSafely() }
         synchronized(lock) { latest?.recycle(); latest=null }
-        visited.forEach { it.recycle() }; previousFingerprint?.recycle()
+        visited.forEach { it.recycle() }
         if(::ocr.isInitialized) ocr.close()
         if(::store.isInitialized) store.close()
         stopForeground(STOP_FOREGROUND_REMOVE); super.onDestroy()

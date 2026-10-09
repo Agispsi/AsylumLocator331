@@ -66,7 +66,10 @@ class MainActivity : Activity() {
     }
     override fun onResume() { super.onResume(); if(::results.isInitialized) refresh() }
     private fun text(value: String,size: Float=14f): TextView = TextView(this).apply { text=value; textSize=size; setTextColor(Color.rgb(20,35,50)); setPadding(0,12,0,12); body.addView(this) }
-    private fun field(hintText: String,value: String,numeric: Boolean=false) = EditText(this).apply { hint=hintText; setText(value); setSingleLine(); if(numeric) inputType=InputType.TYPE_CLASS_NUMBER; body.addView(this) }
+    private fun field(hintText: String,value: String,numeric: Boolean=false): EditText {
+        text(hintText,13f)
+        return EditText(this).apply { hint=hintText; setText(value); setSingleLine(); if(numeric) inputType=InputType.TYPE_CLASS_NUMBER; body.addView(this) }
+    }
     private fun button(label: String,action: () -> Unit) { body.addView(Button(this).apply { text=label; setOnClickListener { action() } }) }
     private fun begin() {
         try {
@@ -76,11 +79,19 @@ class MainActivity : Activity() {
             val levelText=level.text.toString().trim()
             pending=SearchSpec(name.text.toString(),if(levelText.isBlank()) null else levelText.toInt(),331,rows.text.toString().toInt(),columns.text.toString().toInt())
             prefs.edit().putString("query",name.text.toString()).putString("level",levelText).putString("rows",rows.text.toString()).putString("columns",columns.text.toString()).apply()
-            if(Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),45)
-            val manager=getSystemService(MediaProjectionManager::class.java)
-            val captureIntent=if(Build.VERSION.SDK_INT >= 34) manager.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay()) else manager.createScreenCaptureIntent()
-            @Suppress("DEPRECATION") startActivityForResult(captureIntent,43)
+            if(Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),45)
+            } else requestCapture()
         } catch(e: Exception) { AlertDialog.Builder(this).setMessage(e.message ?: "Invalid search settings").setPositiveButton("OK",null).show() }
+    }
+    private fun requestCapture() {
+        val manager=getSystemService(MediaProjectionManager::class.java)
+        val captureIntent=if(Build.VERSION.SDK_INT >= 34) manager.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay()) else manager.createScreenCaptureIntent()
+        @Suppress("DEPRECATION") startActivityForResult(captureIntent,43)
+    }
+    override fun onRequestPermissionsResult(requestCode: Int,permissions: Array<out String>,grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode,permissions,grantResults)
+        if(requestCode == 45 && pending != null) requestCapture()
     }
     @Deprecated("Android activity result bridge")
     override fun onActivityResult(requestCode: Int,resultCode: Int,data: Intent?) {
@@ -90,7 +101,7 @@ class MainActivity : Activity() {
             startForegroundService(Intent(this,CaptureService::class.java).putExtra("consent",data).putExtra("query",spec.query).putExtra("level",spec.level ?: 0).putExtra("rows",spec.rows).putExtra("columns",spec.columns))
         }
         if(requestCode == 44 && resultCode == RESULT_OK) data?.data?.let { uri ->
-            try { contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(exportBody) }; Toast.makeText(this,"Export saved",Toast.LENGTH_SHORT).show() }
+            try { (contentResolver.openOutputStream(uri) ?: error("Cannot open export destination")).bufferedWriter().use { it.write(exportBody) }; Toast.makeText(this,"Export saved",Toast.LENGTH_SHORT).show() }
             catch(e: Exception) { Toast.makeText(this,"Export failed: ${e.message}",Toast.LENGTH_LONG).show() }
         }
     }

@@ -17,7 +17,11 @@ data class SearchSpec(val query: String, val level: Int?, val server: Int = 331,
 }
 object LocatorLogic {
     private val tags = Regex("\\[[^\\[\\]\\r\\n]*]")
-    fun cleanName(raw: String): String = tags.replace(Normalizer.normalize(raw, Normalizer.Form.NFKC), "").trim().replace(Regex("\\s+"), " ")
+    fun cleanName(raw: String): String {
+        var value=Normalizer.normalize(raw,Normalizer.Form.NFKC)
+        while(tags.containsMatchIn(value)) value=tags.replace(value,"")
+        return value.trim().replace(Regex("\\s+")," ")
+    }
     fun key(raw: String) = cleanName(raw).lowercase(Locale.ROOT)
     fun matches(raw: String, query: String): Boolean {
         val needle = key(query)
@@ -35,9 +39,10 @@ object LocatorLogic {
         return PlayerIdentity(display, name, tags.find(display)?.value?.removeSurrounding("[", "]"), level)
     }
     fun coordinates(raw: String): Coordinates? {
-        val re = Regex("(?i)(?<![\\d#])#\\s*(\\d{1,6})\\s+X\\s*[:：]\\s*(\\d{1,6})\\s+Y\\s*[:：]\\s*(\\d{1,6})(?!\\d)")
+        val re = Regex("(?i)(?<![\\d#])#\\s*(\\d{1,6})\\s+X\\s*[:：]\\s*(\\d{1,6})\\s+Y\\s*[:：]\\s*(\\d{1,6})(?=\\s|$)")
         val all = re.findAll(raw).toList()
         if (all.size != 1) return null
+        if (raw.removeRange(all.single().range).any { it.isDigit() }) return null
         val g = all.single().groupValues
         return Coordinates(g[1].toInt(), g[2].toInt(), g[3].toInt()).takeIf { it.server > 0 }
     }

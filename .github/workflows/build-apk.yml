@@ -37,7 +37,9 @@ jobs:
           target: google_apis
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
-          script: gradle --no-daemon connectedDebugAndroidTest
+          script: |
+            gradle --no-daemon connectedDebugAndroidTest
+            adb pull /sdcard/Android/data/com.agispsi.asylumlocator/files/main-screen.png app/build/reports/main-screen.png
       - name: Package APK and validation reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -48,6 +50,7 @@ jobs:
             app/build/reports/tests/
             app/build/reports/androidTests/
             app/build/reports/lint-results-debug.html
+            app/build/reports/main-screen.png
             app/build/outputs/androidTest-results/
           if-no-files-found: warn
       - name: Publish phone-downloadable APK after tests pass
